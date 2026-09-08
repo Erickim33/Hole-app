@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+dist/
+web-build/
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+keystore.properties
+credentials.json
+.DS_Store
+
+# Local App backups
+App-backup.js
+App-before-expo-go.js
+App.backup.js

@@ -6,21 +6,39 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
       "backgroundColor": "#000000"
+    },
+    "android": {
+      "package": "com.eric5544.hole",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      }
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.hole.app"
-    },
-    "android": {
-      "package": "com.hole.app"
+      "bundleIdentifier": "com.eric5544.hole",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "extra": {
       "eas": {
         "projectId": "7c75e24f-1540-4ecb-ac32-77f273dfa1aa"
       }
     },
-    "owner": "eric5544"
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7c75e24f-1540-4ecb-ac32-77f273dfa1aa"
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
   }
 }
