@@ -248,54 +248,35 @@ export default function App() {
     };
 
     if (token) {
-
       headers.Authorization =
         `Bearer ${token}`;
-
     }
 
-    const url = `${backendUrl}${path}`;
-
-    try {
-
-      const response =
-        await fetch(url, {
+    const response =
+      await fetch(
+        backendUrl.replace(/\/$/, '') + path,
+        {
           ...options,
           headers,
-        });
-
-      if (!response.ok) {
-
-        if (
-          response.status === 401 &&
-          token
-        ) {
-
-          setToken(null);
-          setMe(null);
-          setScreen('setup');
-
-          await AsyncStorage.removeItem('hole_token');
-          await AsyncStorage.removeItem('hole_me');
-
         }
+      );
 
-        throw new Error(
-          `API error: ${response.status}`
-        );
+    const data =
+      await response
+        .json()
+        .catch(() => ({}));
 
-      }
+    if (!response.ok) {
 
-      const data =
-        await response.json();
-
-      return data;
-
-    } catch (e) {
-
-      throw e;
+      throw new Error(
+        data.error ||
+        data.message ||
+        `Request failed (${response.status})`
+      );
 
     }
+
+    return data;
 
   }
 
@@ -304,182 +285,364 @@ export default function App() {
   // LOGIN
   // ===================================================
 
-  async function handleLogin(
-    email,
-    password
-  ) {
+ async function loginAccount() {
+
+  setErr('');
+  setBusy(true);
+
+  try {
+
+    if (!username.trim()) {
+      throw new Error(
+        'Username is required'
+      );
+    }
+
+    if (!password) {
+      throw new Error(
+        'Password is required'
+      );
+    }
+
+    const data =
+      await api(
+        '/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            username:
+              username.trim(),
+
+            password,
+          }),
+        }
+      );
+
+    await finishAuth(data);
+
+  } catch (e) {
+
+    setErr(
+      e.message ||
+      'Login failed'
+    );
+
+  }
+
+  setBusy(false);
+
+}
+
+
+  // ===================================================
+  // REQUEST EMAIL OTP
+  // ===================================================
+
+  async function requestEmailOtp() {
 
     setErr('');
     setBusy(true);
 
     try {
 
-      const result =
-        await api('/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-            password,
-          }),
-        });
-
-      if (!result.token) {
+      if (!email.trim()) {
 
         throw new Error(
-          'No token returned'
+          'Enter your email address'
         );
 
       }
 
-      setToken(result.token);
-      setMe(result.user);
+      const cleanEmail =
+        email.trim().toLowerCase();
 
-      await AsyncStorage.setItem(
-        'hole_token',
-        result.token
-      );
+      const r =
+        await fetch(
+          backendUrl.replace(/\/$/, '') +
+          '/auth/request-email-otp',
+          {
+            method: 'POST',
 
-      await AsyncStorage.setItem(
-        'hole_me',
-        JSON.stringify(result.user)
-      );
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
 
-      setScreen('home');
-      setTab('chats');
+            body: JSON.stringify({
+              email: cleanEmail,
+            }),
+          }
+        );
+
+      const data =
+        await r.json()
+          .catch(() => ({}));
+
+      if (!r.ok) {
+
+        throw new Error(
+          data.error ||
+          'Could not send verification code'
+        );
+
+      }
+
+      setEmail(cleanEmail);
+      setScreen('verify');
 
     } catch (e) {
 
       setErr(
         e.message ||
-        'Login failed'
+        'Could not send verification code'
       );
 
-    } finally {
-
-      setBusy(false);
-
     }
+
+    setBusy(false);
 
   }
 
 
   // ===================================================
-  // REGISTER / EMAIL OTP
+  // VERIFY EMAIL OTP
   // ===================================================
 
-  async function handleSendCode(
-    email
-  ) {
+  async function verifyEmailAndContinue() {
 
     setErr('');
     setBusy(true);
 
     try {
 
-      const result =
-        await api('/auth/send-code', {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-          }),
-        });
+      if (!email.trim()) {
 
-      setVerifiedEmail(email);
+        throw new Error(
+          'Enter your email address'
+        );
+
+      }
+
+      if (!code.trim()) {
+
+        throw new Error(
+          'Enter the verification code'
+        );
+
+      }
+
+      const cleanEmail =
+        email.trim().toLowerCase();
+
+      const cleanCode =
+        code.trim();
+
+      const r =
+        await fetch(
+          backendUrl.replace(/\/$/, '') +
+          '/auth/verify-email-otp',
+          {
+            method: 'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+
+            body: JSON.stringify({
+              email: cleanEmail,
+              code: cleanCode,
+            }),
+          }
+        );
+
+      const data =
+        await r.json()
+          .catch(() => ({}));
+
+      if (!r.ok) {
+
+        throw new Error(
+          data.error ||
+          'Invalid verification code'
+        );
+
+      }
+
+      setEmail(cleanEmail);
+
+      setVerifiedEmail(
+        cleanEmail
+      );
+
       setEmailVerified(true);
+
+      console.log(
+        'HOLE DEBUG: EMAIL VERIFIED SUCCESSFULLY',
+        cleanEmail
+      );
+
       setCode('');
+      setErr('');
+
+      if (data.existingAccount) {
+
+        if (data.token && data.user) {
+
+          await finishAuth(data);
+
+        } else {
+
+          setScreen('profile');
+
+        }
+
+      } else {
+
+        setScreen('profile');
+
+      }
 
     } catch (e) {
 
+      setEmailVerified(false);
+
       setErr(
         e.message ||
-        'Failed to send code'
+        'Verification failed'
       );
-
-    } finally {
-
-      setBusy(false);
 
     }
 
+    setBusy(false);
+
   }
 
-  async function handleVerifyCode(
-    email,
-    code
-  ) {
+
+  // ===================================================
+  // REGISTER
+  // ===================================================
+
+  async function registerAccount() {
+
+    console.log(
+      '🔥 REGISTER BUTTON FUNCTION RAN'
+    );
 
     setErr('');
     setBusy(true);
 
     try {
 
-      const result =
-        await api('/auth/verify-code', {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-            code,
-          }),
-        });
+      if (!email.trim()) {
 
-      setVerifiedEmail(email);
-      setScreen('profile');
+        throw new Error(
+          'Email address is required'
+        );
 
-    } catch (e) {
+      }
 
-      setErr(
-        e.message ||
-        'Code verification failed'
+      if (!emailVerified) {
+
+        throw new Error(
+          'Please verify your email address first'
+        );
+
+      }
+
+      if (!username.trim()) {
+
+        throw new Error(
+          'Username is required'
+        );
+
+      }
+
+      if (!displayName.trim()) {
+
+        throw new Error(
+          'Display name is required'
+        );
+
+      }
+
+      if (
+        !password ||
+        password.length < 8
+      ) {
+
+        throw new Error(
+          'Password must be at least 8 characters'
+        );
+
+      }
+
+      const cleanEmail =
+        email.trim().toLowerCase();
+
+      const cleanUsername =
+        username.trim().toLowerCase();
+
+      const cleanDisplayName =
+        displayName.trim();
+
+      console.log(
+        '🔥 ABOUT TO CALL /auth/register'
       );
 
-    } finally {
+      const r =
+        await fetch(
+          backendUrl.replace(/\/$/, '') +
+          '/auth/register',
+          {
+            method: 'POST',
 
-      setBusy(false);
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
 
-    }
+            body: JSON.stringify({
 
-  }
+              email:
+                cleanEmail,
 
-  async function handleRegister(
-    email,
-    username,
-    displayName,
-    password,
-    emoji
-  ) {
+              username:
+                cleanUsername,
 
-    setErr('');
-    setBusy(true);
+              displayName:
+                cleanDisplayName,
 
-    try {
+              password,
 
-      const result =
-        await api('/auth/register', {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-            username,
-            displayName,
-            password,
-            emoji,
-          }),
-        });
+              emoji,
 
-      setToken(result.token);
-      setMe(result.user);
+              emailVerified: true,
 
-      await AsyncStorage.setItem(
-        'hole_token',
-        result.token
+            }),
+          }
+        );
+
+      const data =
+        await r.json()
+          .catch(() => ({}));
+
+      console.log(
+        'REGISTER RESPONSE:',
+        r.status,
+        data
       );
 
-      await AsyncStorage.setItem(
-        'hole_me',
-        JSON.stringify(result.user)
-      );
+      if (!r.ok) {
 
-      setScreen('home');
-      setTab('chats');
+        throw new Error(
+          data.error ||
+          'Registration failed'
+        );
+
+      }
+
+      await finishAuth(data);
 
     } catch (e) {
 
@@ -488,332 +651,793 @@ export default function App() {
         'Registration failed'
       );
 
-    } finally {
-
-      setBusy(false);
-
     }
+
+    setBusy(false);
 
   }
 
 
   // ===================================================
-  // SEARCH
+  // FINISH AUTH
   // ===================================================
 
-  async function handleSearch(
-    query
-  ) {
+  async function finishAuth({
+    token: tok,
+    user,
+  }) {
 
-    if (!query.trim()) {
+    if (!tok) {
 
-      setSearchResults([]);
-      return;
+      throw new Error(
+        'Authentication succeeded but no token was returned'
+      );
 
     }
 
-    clearTimeout(searchDebounceRef.current);
+    setToken(tok);
+    setMe(user);
 
-    searchDebounceRef.current =
-      setTimeout(async () => {
+    setScreen('home');
+    setTab('chats');
+    setSettingsSection(null);
+
+    await AsyncStorage.setItem(
+      'hole_token',
+      tok
+    );
+
+    await AsyncStorage.setItem(
+      'hole_me',
+      JSON.stringify(user)
+    );
+
+    await AsyncStorage.setItem(
+      'hole_backend',
+      backendUrl
+    );
+
+    connectSocket(
+      tok,
+      user
+    );
+
+  }
+
+
+  // ===================================================
+  // LOGOUT / LEAVE
+  // ===================================================
+
+  async function leaveHole() {
+
+    try {
+
+      if (socketRef.current) {
+
+        socketRef.current.disconnect();
+
+        socketRef.current =
+          null;
+
+      }
+
+    } catch (e) {}
+
+    await AsyncStorage.multiRemove([
+      'hole_token',
+      'hole_me',
+    ]);
+
+    setToken(null);
+    setMe(null);
+
+    setConversations({});
+    setActiveChatId(null);
+
+    setSettingsSection(null);
+
+    setEmail('');
+    setPassword('');
+    setUsername('');
+    setDisplayName('');
+    setCode('');
+    setEmailVerified(false);
+
+    setScreen('setup');
+    setTab('chats');
+
+  }
+
+
+  // ===================================================
+  // SOCKET
+  // ===================================================
+
+  const connectSocket =
+    useCallback(
+      (authToken, currentUser) => {
 
         try {
 
-          const results =
-            await api(
-              `/users?query=${encodeURIComponent(query)}`
-            );
+          if (socketRef.current) {
 
-          setSearchResults(
-            results || []
+            socketRef.current.disconnect();
+
+          }
+
+          const socket =
+            io(backendUrl, {
+              transports: ['websocket'],
+              auth: {
+                token: authToken,
+              },
+            });
+
+          socketRef.current =
+            socket;
+
+          socket.on(
+            'connect',
+            () => {
+
+              console.log(
+                '🔥 SOCKET CONNECTED'
+              );
+
+              setConnected(true);
+
+            }
           );
 
+          socket.on(
+            'disconnect',
+            () => {
+
+              console.log(
+                '🔥 SOCKET DISCONNECTED'
+              );
+
+              setConnected(false);
+
+            }
+          );
+
+          socket.on(
+            'connect_error',
+            error => {
+
+              console.log(
+                'SOCKET ERROR:',
+                error.message
+              );
+
+              setConnected(false);
+
+            }
+          );
+
+
+          // -------------------------------------------
+          // Incoming message
+          // -------------------------------------------
+
+          socket.on(
+            'message',
+            message => {
+
+              handleIncomingMessage(
+                message
+              );
+
+            }
+          );
+
+
+          socket.on(
+            'new_message',
+            message => {
+
+              handleIncomingMessage(
+                message
+              );
+
+            }
+          );
+
+
+          socket.on(
+            'message:new',
+            message => {
+
+              handleIncomingMessage(
+                message
+              );
+
+            }
+          );
+
+
+          // -------------------------------------------
+          // Typing
+          // -------------------------------------------
+
+          socket.on(
+            'typing',
+            data => {
+
+              if (
+                data &&
+                data.userId !== currentUser?._id
+              ) {
+
+                setPeerTyping(true);
+
+                clearTimeout(
+                  typingTimeoutRef.current
+                );
+
+                typingTimeoutRef.current =
+                  setTimeout(() => {
+
+                    setPeerTyping(false);
+
+                  }, 2000);
+
+              }
+
+            }
+          );
+
+
+          socket.on(
+            'stop_typing',
+            () => {
+
+              setPeerTyping(false);
+
+            }
+          );
         } catch (e) {
 
           console.log(
-            'Search error:',
+            'SOCKET SETUP ERROR:',
             e
           );
 
         }
 
-      }, 300);
-
-  }
-
-  async function startChat(user) {
-
-    try {
-
-      const result =
-        await api('/chats', {
-          method: 'POST',
-          body: JSON.stringify({
-            peerId: user.id,
-          }),
-        });
-
-      setShowNewChat(false);
-      setSearchQuery('');
-      setSearchResults([]);
-
-      setActiveChatId(result.id);
-      setScreen('chat');
-
-    } catch (e) {
-
-      setErr(
-        e.message ||
-        'Failed to start chat'
-      );
-
-    }
-
-  }
+      },
+      [backendUrl]
+    );
 
 
   // ===================================================
-  // SOCKET.IO
+  // CONNECT SOCKET AFTER SESSION RESTORE
   // ===================================================
 
   useEffect(() => {
 
-    if (!token || !me) {
-      return;
+    if (
+      token &&
+      me
+    ) {
+
+      connectSocket(
+        token,
+        me
+      );
+
     }
 
-    const socket =
-      io(backendUrl, {
-        auth: {
-          token,
-        },
-      });
+    return () => {
 
-    socketRef.current = socket;
+      if (socketRef.current) {
 
-    socket.on('connect', () => {
-
-      setConnected(true);
-
-      socket.emit('presence', {
-        status: 'online',
-      });
-
-    });
-
-    socket.on('disconnect', () => {
-
-      setConnected(false);
-
-    });
-
-    socket.on('message', (data) => {
-
-      setConversations(prev => {
-
-        const chatId = data.chatId;
-        const chat = prev[chatId] || {
-          id: chatId,
-          peer: data.peer,
-          messages: [],
-        };
-
-        return {
-          ...prev,
-          [chatId]: {
-            ...chat,
-            messages: [
-              ...chat.messages,
-              data,
-            ],
-          },
-        };
-
-      });
-
-    });
-
-    socket.on('typing', (data) => {
-
-      if (
-        data.chatId === activeChatId
-      ) {
-
-        setPeerTyping(true);
-
-        setTimeout(() => {
-
-          setPeerTyping(false);
-
-        }, 3000);
+        socketRef.current.disconnect();
 
       }
 
-    });
+    };
 
-    socket.on('load-chats', (data) => {
+  }, [token, me, connectSocket]);
 
-      const chats = {};
 
-      (data || []).forEach(chat => {
+  // ===================================================
+  // HANDLE INCOMING MESSAGE
+  // ===================================================
 
-        chats[chat.id] = {
-          ...chat,
-          messages: chat.messages || [],
+  function handleIncomingMessage(
+    message
+  ) {
+
+    if (!message) {
+      return;
+    }
+
+    const conversationId =
+      message.conversationId ||
+      message.chatId ||
+      message.roomId;
+
+    if (!conversationId) {
+      return;
+    }
+
+    setConversations(prev => {
+
+      const existing =
+        prev[conversationId] || {
+          id: conversationId,
+          messages: [],
         };
 
-      });
+      const exists =
+        existing.messages.some(
+          m =>
+            String(m._id || m.id) ===
+            String(message._id || message.id)
+        );
 
-      setConversations(chats);
+      if (exists) {
+        return prev;
+      }
 
-    });
+      return {
 
-    return () => {
+        ...prev,
 
-      socket.disconnect();
+        [conversationId]: {
 
-    };
+          ...existing,
 
-  }, [token, me, backendUrl, activeChatId]);
+          messages: [
+            ...existing.messages,
+            {
+              ...message,
+              receivedAt:
+                Date.now(),
+            },
+          ],
 
+        },
 
-  // ===================================================
-  // MESSAGE LIFECYCLE
-  // ===================================================
-
-  useEffect(() => {
-
-    const timers = {};
-
-    Object.values(conversations).forEach(chat => {
-
-      (chat.messages || []).forEach(msg => {
-
-        if (
-          msg.expiresAt &&
-          !timers[msg.id]
-        ) {
-
-          const timeLeft =
-            new Date(msg.expiresAt) -
-            Date.now();
-
-          if (timeLeft > 0) {
-
-            timers[msg.id] =
-              setTimeout(() => {
-
-                setConversations(prev => {
-
-                  const updated = {
-                    ...prev,
-                  };
-
-                  Object.keys(updated).forEach(
-                    key => {
-
-                      updated[key] = {
-                        ...updated[key],
-                        messages: (
-                          updated[key]
-                            .messages || []
-                        ).filter(m =>
-                          m.id !== msg.id
-                        ),
-                      };
-
-                    }
-                  );
-
-                  return updated;
-
-                });
-
-              }, timeLeft);
-
-          }
-
-        }
-
-      });
+      };
 
     });
 
-    return () => {
+  }
 
-      Object.values(timers).forEach(
-        t => clearTimeout(t)
+
+  // ===================================================
+  // OPEN CHAT
+  // ===================================================
+
+  function openChat(user) {
+
+    if (!user) {
+      return;
+    }
+
+    const id =
+      String(
+        user._id ||
+        user.id ||
+        user.username
       );
 
-    };
+    setConversations(prev => {
 
-  }, [conversations]);
+      if (prev[id]) {
+        return prev;
+      }
+
+      return {
+
+        ...prev,
+
+        [id]: {
+
+          id,
+
+          peer: user,
+
+          messages: [],
+
+        },
+
+      };
+
+    });
+
+    setActiveChatId(id);
+
+    setShowNewChat(false);
+
+    setSearchQuery('');
+
+    setSearchResults([]);
+
+    setScreen('chat');
+
+  }
 
 
   // ===================================================
   // SEND MESSAGE
   // ===================================================
 
-  function sendMessage() {
+  async function sendMessage() {
+
+    const text =
+      draftText.trim();
+
+    if (!text) {
+      return;
+    }
+
+    if (!activeChatId) {
+      return;
+    }
+
+    const chat =
+      conversations[activeChatId];
+
+    const peer =
+      chat?.peer;
+
+    if (!peer) {
+      return;
+    }
+
+    const recipientId =
+      peer._id ||
+      peer.id;
+
+    try {
+
+      const socket =
+        socketRef.current;
+
+      const localMessage = {
+
+        id:
+          `local-${Date.now()}`,
+
+        senderId:
+          me?._id ||
+          me?.id,
+
+        recipientId,
+
+        conversationId:
+          activeChatId,
+
+        text,
+
+        createdAt:
+          new Date().toISOString(),
+
+        expiresAt:
+          new Date(
+            Date.now() +
+            MESSAGE_LIFETIME
+          ).toISOString(),
+
+        localOnly: true,
+
+      };
+
+
+      setConversations(prev => {
+
+        const current =
+          prev[activeChatId] || {
+            id: activeChatId,
+            peer,
+            messages: [],
+          };
+
+        return {
+
+          ...prev,
+
+          [activeChatId]: {
+
+            ...current,
+
+            peer,
+
+            messages: [
+              ...current.messages,
+              localMessage,
+            ],
+
+          },
+
+        };
+
+      });
+
+      setDraftText('');
+
+
+      if (socket?.connected) {
+
+        socket.emit(
+          'message',
+          {
+            recipientId,
+            text,
+          }
+        );
+
+        socket.emit(
+          'send_message',
+          {
+            recipientId,
+            text,
+          }
+        );
+
+      } else {
+
+        await api(
+          '/messages',
+          {
+            method: 'POST',
+
+            body: JSON.stringify({
+              recipientId,
+              text,
+            }),
+          }
+        );
+
+      }
+
+    } catch (e) {
+
+      console.log(
+        'SEND MESSAGE ERROR:',
+        e
+      );
+
+      setErr(
+        e.message ||
+        'Could not send message'
+      );
+
+    }
+
+  }
+
+
+  // ===================================================
+  // TYPING
+  // ===================================================
+
+  function handleTyping(
+    text
+  ) {
+
+    setDraftText(text);
+
+    const socket =
+      socketRef.current;
 
     if (
-      !draftText.trim() ||
-      !socketRef.current
+      !socket ||
+      !socket.connected ||
+      !activeChatId
     ) {
 
       return;
 
     }
 
-    socketRef.current.emit('message', {
-      chatId: activeChatId,
-      text: draftText,
-    });
+    socket.emit(
+      'typing',
+      {
+        conversationId:
+          activeChatId,
+      }
+    );
 
-    setDraftText('');
+    clearTimeout(
+      typingTimeoutRef.current
+    );
+
+    typingTimeoutRef.current =
+      setTimeout(() => {
+
+        socket.emit(
+          'stop_typing',
+          {
+            conversationId:
+              activeChatId,
+          }
+        );
+
+      }, 1000);
 
   }
 
-  function handleTyping() {
 
-    if (socketRef.current) {
+  // ===================================================
+  // REMOVE EXPIRED MESSAGES
+  // ===================================================
 
-      socketRef.current.emit('typing', {
-        chatId: activeChatId,
-      });
+  useEffect(() => {
+
+    const interval =
+      setInterval(() => {
+
+        const now =
+          Date.now();
+
+        setConversations(prev => {
+
+          const next = {
+            ...prev,
+          };
+
+          Object.keys(next)
+            .forEach(id => {
+
+              const chat =
+                next[id];
+
+              if (!chat) {
+                return;
+              }
+
+              const messages =
+                (chat.messages || [])
+                  .filter(message => {
+
+                    if (
+                      !message.expiresAt
+                    ) {
+
+                      return true;
+
+                    }
+
+                    return (
+                      new Date(
+                        message.expiresAt
+                      ).getTime() > now
+                    );
+
+                  });
+
+              next[id] = {
+                ...chat,
+                messages,
+              };
+
+            });
+
+          return next;
+
+        });
+
+      }, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+
+  }, []);
+
+
+  // ===================================================
+  // SEARCH USERS
+  // ===================================================
+
+  useEffect(() => {
+
+    if (!showNewChat) {
+      return;
+    }
+
+    clearTimeout(
+      searchDebounceRef.current
+    );
+
+    if (
+      searchQuery.trim().length < 2
+    ) {
+
+      setSearchResults([]);
+
+      return;
 
     }
 
+    searchDebounceRef.current =
+      setTimeout(async () => {
+
+        try {
+
+          const result =
+            await api(
+              `/users/search?q=${encodeURIComponent(
+                searchQuery.trim()
+              )}`,
+              {
+                method: 'GET',
+              }
+            );
+
+          setSearchResults(
+            result.users ||
+            result.results ||
+            []
+          );
+
+        } catch (e) {
+
+          console.log(
+            'SEARCH ERROR:',
+            e
+          );
+
+          setSearchResults([]);
+
+        }
+
+      }, 400);
+
+    return () => {
+
+      clearTimeout(
+        searchDebounceRef.current
+      );
+
+    };
+
+  }, [
+    searchQuery,
+    showNewChat,
+    token,
+  ]);
+
+
+  // ===================================================
+  // ACTIVE CHAT
+  // ===================================================
+
+  const activeChat =
+    activeChatId
+      ? conversations[activeChatId]
+      : null;
+
+
+  // ===================================================
+  // NAVIGATION
+  // ===================================================
+
+  function setTabScreen(t) {
+
+    setTab(t);
+
+    setSettingsSection(null);
+
+    setScreen(
+      t === 'chats'
+        ? 'home'
+        : t === 'profile'
+        ? 'profile-tab'
+        : t
+    );
+
   }
 
 
   // ===================================================
-  // LOGOUT
-  // ===================================================
-
-  async function logout() {
-
-    setToken(null);
-    setMe(null);
-    setConversations({});
-    setActiveChatId(null);
-    setTab('chats');
-    setScreen('setup');
-
-    await AsyncStorage.removeItem('hole_token');
-    await AsyncStorage.removeItem('hole_me');
-
-    if (socketRef.current) {
-
-      socketRef.current.disconnect();
-
-    }
-
-  }
-
-
-  // ===================================================
-  // SETUP / LOGIN SCREEN
+  // SETUP SCREEN
   // ===================================================
 
   if (screen === 'setup') {
@@ -824,185 +1448,205 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
-        <ScrollView
-          contentContainerStyle={
-            styles.authContainer
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={
+            Platform.OS === 'ios'
+              ? 'padding'
+              : undefined
           }
-          keyboardShouldPersistTaps="handled"
         >
 
-          <View
-            style={styles.authLogoBox}
+          <ScrollView
+            contentContainerStyle={
+              styles.authContainer
+            }
+            keyboardShouldPersistTaps="handled"
           >
-
-            <Text
-              style={styles.authLogoText}
-            >
-              H
-            </Text>
 
             <View
-              style={styles.authLogoRing}
-            />
-
-            <Text
-              style={styles.authLogoText}
+              style={styles.logoCircle}
             >
-              LE
-            </Text>
-
-          </View>
-
-          <Text
-            style={styles.authTitle}
-          >
-            Welcome to Hole
-          </Text>
-
-          <Text
-            style={styles.authSubtitle}
-          >
-            Simple communication.
-            Temporary messages.
-          </Text>
-
-          {err && (
-            <View
-              style={styles.errorBox}
-            >
-
               <Text
-                style={styles.errorText}
+                style={styles.logoText}
               >
-                {err}
+                H
               </Text>
 
+              <Text
+                style={styles.logoRing}
+              >
+                
+              </Text>
+
+              <Text
+                style={styles.logoText}
+              >
+                LE
+              </Text>
             </View>
-          )}
 
-          {authMode === 'login' ? (
 
-            <>
+            <Text
+              style={styles.authTitle}
+            >
+              Welcome to Hole
+            </Text>
 
-              <TextInput
-                style={styles.input}
-                placeholder="Email"
-                placeholderTextColor={SUB}
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                editable={!busy}
-              />
+            <Text
+              style={styles.authSubtitle}
+            >
+              Simple communication.
+              {'\n'}
+              Temporary messages.
+            </Text>
 
-              <TextInput
-                style={styles.input}
-                placeholder="Password"
-                placeholderTextColor={SUB}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                editable={!busy}
-              />
 
-              <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  busy && styles.buttonDisabled,
-                ]}
-                onPress={() =>
-                  handleLogin(email, password)
-                }
-                disabled={busy}
+            {err ? (
+
+              <View
+                style={styles.errorBox}
               >
 
                 <Text
-                  style={styles.primaryButtonText}
+                  style={styles.errorText}
                 >
-                  {busy ? 'Logging in...' : 'Log In'}
+                  {err}
                 </Text>
 
-              </TouchableOpacity>
+              </View>
 
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => {
-                  setAuthMode('register');
-                  setErr('');
-                }}
-                disabled={busy}
-              >
+            ) : null}
 
-                <Text
-                  style={styles.secondaryButtonText}
+
+            {authMode === 'login' ? (
+
+              <>
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Username"
+                  placeholderTextColor="#666"
+                  autoCapitalize="none"
+                  value={username}
+                  onChangeText={setUsername}
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#666"
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                />
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={loginAccount}
+                  disabled={busy}
                 >
-                  Create an account
-                </Text>
 
-              </TouchableOpacity>
+                  <Text
+                    style={styles.primaryButtonText}
+                  >
+                    {busy
+                      ? 'Please wait...'
+                      : 'Log In'}
+                  </Text>
 
-            </>
+                </TouchableOpacity>
 
-          ) : (
 
-            <>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => {
 
-              <TextInput
-                style={styles.input}
-                placeholder="Email"
-                placeholderTextColor={SUB}
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                editable={!busy}
-              />
+                    setAuthMode(
+                      'register'
+                    );
 
-              <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  busy && styles.buttonDisabled,
-                ]}
-                onPress={() =>
-                  handleSendCode(email)
-                }
-                disabled={busy}
-              >
+                    setErr('');
 
-                <Text
-                  style={styles.primaryButtonText}
+                  }}
                 >
-                  {busy
-                    ? 'Sending...'
-                    : 'Send Verification Code'}
-                </Text>
 
-              </TouchableOpacity>
+                  <Text
+                    style={styles.secondaryButtonText}
+                  >
+                    Create an account
+                  </Text>
 
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={() => {
-                  setAuthMode('login');
-                  setErr('');
-                }}
-                disabled={busy}
-              >
+                </TouchableOpacity>
 
-                <Text
-                  style={styles.secondaryButtonText}
+              </>
+
+            ) : (
+
+              <>
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email address"
+                  placeholderTextColor="#666"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={
+                    requestEmailOtp
+                  }
+                  disabled={busy}
                 >
-                  Back to Log In
-                </Text>
 
-              </TouchableOpacity>
+                  <Text
+                    style={styles.primaryButtonText}
+                  >
+                    {busy
+                      ? 'Sending...'
+                      : 'Verify Email'}
+                  </Text>
 
-            </>
+                </TouchableOpacity>
 
-          )}
 
-        </ScrollView>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => {
+
+                    setAuthMode(
+                      'login'
+                    );
+
+                    setErr('');
+
+                  }}
+                >
+
+                  <Text
+                    style={styles.secondaryButtonText}
+                  >
+                    I already have an account
+                  </Text>
+
+                </TouchableOpacity>
+
+              </>
+
+            )}
+
+          </ScrollView>
+
+        </KeyboardAvoidingView>
 
       </SafeAreaView>
 
@@ -1012,7 +1656,7 @@ export default function App() {
 
 
   // ===================================================
-  // VERIFY EMAIL CODE
+  // VERIFY SCREEN
   // ===================================================
 
   if (screen === 'verify') {
@@ -1023,119 +1667,131 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
-        <ScrollView
-          contentContainerStyle={
-            styles.authContainer
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={
+            Platform.OS === 'ios'
+              ? 'padding'
+              : undefined
           }
-          keyboardShouldPersistTaps="handled"
         >
 
-          <View
-            style={styles.authLogoBox}
+          <ScrollView
+            contentContainerStyle={
+              styles.authContainer
+            }
           >
 
             <Text
-              style={styles.authLogoText}
+              style={styles.authTitle}
             >
-              H
+              Verify your email
             </Text>
 
-            <View
-              style={styles.authLogoRing}
+            <Text
+              style={styles.authSubtitle}
+            >
+              We sent a verification code to
+            </Text>
+
+            <Text
+              style={styles.emailDisplay}
+            >
+              {email}
+            </Text>
+
+
+            {err ? (
+
+              <View
+                style={styles.errorBox}
+              >
+
+                <Text
+                  style={styles.errorText}
+                >
+                  {err}
+                </Text>
+
+              </View>
+
+            ) : null}
+
+
+            <TextInput
+              style={[
+                styles.input,
+                styles.codeInput,
+              ]}
+              placeholder="Verification code"
+              placeholderTextColor="#666"
+              keyboardType="number-pad"
+              value={code}
+              onChangeText={setCode}
+              maxLength={8}
             />
 
-            <Text
-              style={styles.authLogoText}
-            >
-              LE
-            </Text>
 
-          </View>
-
-          <Text
-            style={styles.authTitle}
-          >
-            Verify Email
-          </Text>
-
-          <Text
-            style={styles.authSubtitle}
-          >
-            We sent a code to {verifiedEmail}
-          </Text>
-
-          {err && (
-            <View
-              style={styles.errorBox}
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={
+                verifyEmailAndContinue
+              }
+              disabled={busy}
             >
 
               <Text
-                style={styles.errorText}
+                style={styles.primaryButtonText}
               >
-                {err}
+                {busy
+                  ? 'Checking...'
+                  : 'Verify'}
               </Text>
 
-            </View>
-          )}
+            </TouchableOpacity>
 
-          <TextInput
-            style={[
-              styles.input,
-              styles.codeInput,
-            ]}
-            placeholder="000000"
-            placeholderTextColor={SUB}
-            value={code}
-            onChangeText={setCode}
-            keyboardType="numeric"
-            maxLength={6}
-            editable={!busy}
-          />
 
-          <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              busy && styles.buttonDisabled,
-            ]}
-            onPress={() =>
-              handleVerifyCode(
-                verifiedEmail,
-                code
-              )
-            }
-            disabled={busy}
-          >
-
-            <Text
-              style={styles.primaryButtonText}
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={
+                requestEmailOtp
+              }
             >
-              {busy
-                ? 'Verifying...'
-                : 'Verify Code'}
-            </Text>
 
-          </TouchableOpacity>
+              <Text
+                style={styles.secondaryButtonText}
+              >
+                Send another code
+              </Text>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => {
-              setScreen('setup');
-              setErr('');
-            }}
-            disabled={busy}
-          >
+            </TouchableOpacity>
 
-            <Text
-              style={styles.secondaryButtonText}
+
+            <TouchableOpacity
+              onPress={() => {
+
+                setScreen('setup');
+                setCode('');
+                setErr('');
+
+              }}
             >
-              Back
-            </Text>
 
-          </TouchableOpacity>
+              <Text
+                style={styles.backText}
+              >
+                ← Back
+              </Text>
 
-        </ScrollView>
+            </TouchableOpacity>
+
+          </ScrollView>
+
+        </KeyboardAvoidingView>
 
       </SafeAreaView>
 
@@ -1145,7 +1801,7 @@ export default function App() {
 
 
   // ===================================================
-  // PROFILE SETUP
+  // PROFILE CREATION
   // ===================================================
 
   if (screen === 'profile') {
@@ -1156,144 +1812,150 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
-        <ScrollView
-          contentContainerStyle={
-            styles.authContainer
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={
+            Platform.OS === 'ios'
+              ? 'padding'
+              : undefined
           }
-          keyboardShouldPersistTaps="handled"
         >
 
-          <View
-            style={styles.profileEmojiBox}
+          <ScrollView
+            contentContainerStyle={
+              styles.authContainer
+            }
+            keyboardShouldPersistTaps="handled"
           >
 
             <Text
-              style={styles.profileEmoji}
+              style={styles.authTitle}
             >
-              {emoji}
+              Create your profile
             </Text>
 
-          </View>
-
-          <Text
-            style={styles.authTitle}
-          >
-            Create your profile
-          </Text>
-
-          <Text
-            style={styles.authSubtitle}
-          >
-            Choose your avatar and details
-          </Text>
-
-          {err && (
-            <View
-              style={styles.errorBox}
+            <Text
+              style={styles.authSubtitle}
             >
+              Your identity inside Hole
+            </Text>
 
-              <Text
-                style={styles.errorText}
-              >
-                {err}
-              </Text>
 
-            </View>
-          )}
+            {err ? (
 
-          <Text
-            style={styles.emojiLabel}
-          >
-            Choose an emoji
-          </Text>
-
-          <View
-            style={styles.emojiGrid}
-          >
-
-            {EMOJI_CHOICES.map(e => (
-
-              <TouchableOpacity
-                key={e}
-                style={[
-                  styles.emojiItem,
-                  emoji === e &&
-                    styles.emojiItemActive,
-                ]}
-                onPress={() => setEmoji(e)}
+              <View
+                style={styles.errorBox}
               >
 
                 <Text
-                  style={styles.emojiText}
+                  style={styles.errorText}
                 >
-                  {e}
+                  {err}
                 </Text>
 
-              </TouchableOpacity>
+              </View>
 
-            ))}
+            ) : null}
 
-          </View>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            placeholderTextColor={SUB}
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-            editable={!busy}
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Username"
+              placeholderTextColor="#666"
+              autoCapitalize="none"
+              value={username}
+              onChangeText={setUsername}
+            />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Display Name"
-            placeholderTextColor={SUB}
-            value={displayName}
-            onChangeText={setDisplayName}
-            editable={!busy}
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Display name"
+              placeholderTextColor="#666"
+              value={displayName}
+              onChangeText={setDisplayName}
+            />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={SUB}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!busy}
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#666"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
 
-          <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              busy && styles.buttonDisabled,
-            ]}
-            onPress={() =>
-              handleRegister(
-                verifiedEmail,
-                username,
-                displayName,
-                password,
-                emoji
-              )
-            }
-            disabled={busy}
-          >
 
             <Text
-              style={styles.primaryButtonText}
+              style={styles.emojiLabel}
             >
-              {busy
-                ? 'Creating...'
-                : 'Create Account'}
+              Choose your profile icon
             </Text>
 
-          </TouchableOpacity>
 
-        </ScrollView>
+            <View
+              style={styles.emojiGrid}
+            >
+
+              {EMOJI_CHOICES.map(item => (
+
+                <TouchableOpacity
+                  key={item}
+                  style={[
+                    styles.emojiButton,
+
+                    emoji === item &&
+                      styles.emojiButtonSelected,
+                  ]}
+                  onPress={() =>
+                    setEmoji(item)
+                  }
+                >
+
+                  <Text
+                    style={{
+                      fontSize: 27,
+                    }}
+                  >
+                    {item}
+                  </Text>
+
+                </TouchableOpacity>
+
+              ))}
+
+            </View>
+
+
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={registerAccount}
+              disabled={busy}
+            >
+
+              <Text
+                style={styles.primaryButtonText}
+              >
+                {busy
+                  ? 'Creating...'
+                  : 'Create Account'}
+              </Text>
+
+            </TouchableOpacity>
+
+
+            <Text
+              style={styles.verifiedText}
+            >
+              ✓ Email verified
+            </Text>
+
+          </ScrollView>
+
+        </KeyboardAvoidingView>
 
       </SafeAreaView>
 
@@ -1308,14 +1970,8 @@ export default function App() {
 
   if (screen === 'chat') {
 
-    const chat =
-      conversations[activeChatId];
-
     const messages =
-      chat?.messages || [];
-
-    const peer =
-      chat?.peer;
+      activeChat?.messages || [];
 
     return (
 
@@ -1323,10 +1979,17 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
-        <View
-          style={styles.chatContainer}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={
+            Platform.OS === 'ios'
+              ? 'padding'
+              : undefined
+          }
         >
 
           <View
@@ -1334,19 +1997,20 @@ export default function App() {
           >
 
             <TouchableOpacity
-              onPress={() =>
-                setScreen('home')
-              }
-              style={styles.chatBackButton}
+              onPress={() => {
+                setScreen('home');
+                setActiveChatId(null);
+              }}
             >
 
               <Text
-                style={styles.chatBackText}
+                style={styles.backButton}
               >
-                ‹
+                ←
               </Text>
 
             </TouchableOpacity>
+
 
             <View
               style={{ flex: 1 }}
@@ -1355,173 +2019,137 @@ export default function App() {
               <Text
                 style={styles.chatTitle}
               >
-                {peer?.displayName ||
-                  peer?.username ||
-                  'User'}
+                {activeChat?.peer
+                  ?.displayName ||
+                  activeChat?.peer
+                  ?.username ||
+                  'Chat'}
               </Text>
 
               <Text
-                style={styles.chatStatus}
+                style={styles.chatSubtitle}
               >
-                {peerTyping
-                  ? 'typing...'
-                  : 'Online'}
+                @{activeChat?.peer
+                  ?.username || ''}
               </Text>
 
             </View>
+
 
             <View
-              style={styles.chatAvatar}
-            >
+              style={[
+                styles.connectionDot,
 
-              <Text
-                style={{
-                  fontSize: 20,
-                }}
-              >
-                {peer?.emoji || '😀'}
-              </Text>
-
-            </View>
+                connected &&
+                  styles.connectionDotOn,
+              ]}
+            />
 
           </View>
+
+
+          {peerTyping ? (
+
+            <Text
+              style={styles.typingText}
+            >
+              typing...
+            </Text>
+
+          ) : null}
+
 
           <FlatList
             ref={scrollRef}
             data={messages}
-            keyExtractor={item =>
-              item.id || Math.random()
+            keyExtractor={(item, index) =>
+              String(
+                item._id ||
+                item.id ||
+                index
+              )
             }
-            onContentSizeChange={() =>
-              scrollRef.current
-                ?.scrollToEnd()
+            contentContainerStyle={
+              styles.messageList
             }
-            renderItem={({ item }) => {
+            renderItem={({
+              item,
+            }) => {
 
-              const isOwn =
-                item.senderId ===
-                me?.id;
-
-              const expiredPercent =
-                item.expiresAt
-                  ? Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        (
-                          (new Date(
-                            item.expiresAt
-                          ) - Date.now()) /
-                          MESSAGE_LIFETIME
-                        ) * 100
-                      )
-                    )
-                  : 0;
+              const mine =
+                String(
+                  item.senderId ||
+                  item.sender?._id ||
+                  item.sender?.id
+                ) ===
+                String(
+                  me?._id ||
+                  me?.id
+                );
 
               return (
 
                 <View
-                  key={item.id}
                   style={[
-                    styles.messageRow,
-                    isOwn &&
-                      styles.messageRowOwn,
+                    styles.messageBubble,
+
+                    mine
+                      ? styles.myMessage
+                      : styles.theirMessage,
                   ]}
                 >
 
-                  <View
-                    style={[
-                      styles.messageBubble,
-                      isOwn &&
-                        styles.messageBubbleOwn,
-                    ]}
+                  <Text
+                    style={styles.messageText}
                   >
+                    {item.text}
+                  </Text>
 
-                    <Text
-                      style={[
-                        styles.messageText,
-                        isOwn &&
-                          styles.messageTextOwn,
-                      ]}
-                    >
-                      {item.text}
-                    </Text>
-
-                    {item.expiresAt && (
-                      <View
-                        style={[
-                          styles.expireBar,
-                          {
-                            width: `${expiredPercent}%`,
-                          },
-                          isOwn &&
-                            styles.expireBarOwn,
-                        ]}
-                      />
-                    )}
-
-                  </View>
+                  <Text
+                    style={styles.messageTimer}
+                  >
+                    30s
+                  </Text>
 
                 </View>
 
               );
 
             }}
-            contentContainerStyle={
-              styles.messagesList
-            }
-            style={styles.messagesArea}
           />
 
-          <KeyboardAvoidingView
-            behavior={
-              Platform.OS === 'ios'
-                ? 'padding'
-                : 'height'
-            }
-            style={styles.inputBox}
+
+          <View
+            style={styles.messageInputRow}
           >
 
             <TextInput
               style={styles.messageInput}
-              placeholder="Type a message..."
-              placeholderTextColor={SUB}
+              placeholder="Message"
+              placeholderTextColor="#666"
               value={draftText}
-              onChangeText={text => {
-
-                setDraftText(text);
-                handleTyping();
-
-              }}
+              onChangeText={
+                handleTyping
+              }
               multiline
-              editable={connected}
             />
 
             <TouchableOpacity
-              style={[
-                styles.sendButton,
-                (!draftText.trim() ||
-                  !connected) &&
-                  styles.sendButtonDisabled,
-              ]}
+              style={styles.sendButton}
               onPress={sendMessage}
-              disabled={
-                !draftText.trim() ||
-                !connected
-              }
             >
 
               <Text
                 style={styles.sendButtonText}
               >
-                Send
+                ↑
               </Text>
 
             </TouchableOpacity>
 
-          </KeyboardAvoidingView>
+          </View>
 
-        </View>
+        </KeyboardAvoidingView>
 
       </SafeAreaView>
 
@@ -1531,7 +2159,7 @@ export default function App() {
 
 
   // ===================================================
-  // HOME SCREEN
+  // HOME / CHATS
   // ===================================================
 
   if (screen === 'home') {
@@ -1547,7 +2175,9 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
         <View
           style={styles.screen}
@@ -1560,7 +2190,7 @@ export default function App() {
             <View>
 
               <Text
-                style={styles.brandTitle}
+                style={styles.title}
               >
                 Hole
               </Text>
@@ -1569,11 +2199,12 @@ export default function App() {
                 style={styles.connectionText}
               >
                 {connected
-                  ? '🟢 Connected'
-                  : '🔴 Connecting...'}
+                  ? 'Connected'
+                  : 'Connecting...'}
               </Text>
 
             </View>
+
 
             <TouchableOpacity
               style={styles.newChatButton}
@@ -1583,7 +2214,7 @@ export default function App() {
             >
 
               <Text
-                style={styles.newChatButtonText}
+                style={styles.newChatText}
               >
                 +
               </Text>
@@ -1592,16 +2223,17 @@ export default function App() {
 
           </View>
 
+
           {chatList.length === 0 ? (
 
             <View
-              style={styles.emptyState}
+              style={styles.emptyScreen}
             >
 
               <Text
                 style={styles.emptyLogo}
               >
-                H◯LE
+                HOLE
               </Text>
 
               <Text
@@ -1613,21 +2245,20 @@ export default function App() {
               <Text
                 style={styles.emptySubtitle}
               >
-                Find someone and start
-                a conversation.
+                Find someone and start a conversation.
               </Text>
 
               <TouchableOpacity
-                style={styles.emptyButton}
+                style={styles.primaryButtonSmall}
                 onPress={() =>
                   setShowNewChat(true)
                 }
               >
 
                 <Text
-                  style={styles.emptyButtonText}
+                  style={styles.primaryButtonText}
                 >
-                  + New Chat
+                  New Chat
                 </Text>
 
               </TouchableOpacity>
@@ -1641,18 +2272,22 @@ export default function App() {
               keyExtractor={item =>
                 item.id
               }
-              renderItem={({ item }) => {
+              contentContainerStyle={{
+                paddingBottom: 100,
+              }}
+              renderItem={({
+                item,
+              }) => {
 
                 const last =
                   item.messages?.[
-                    item.messages.length -
-                    1
+                    item.messages.length - 1
                   ];
 
                 return (
 
                   <TouchableOpacity
-                    style={styles.chatItem}
+                    style={styles.chatRow}
                     onPress={() => {
 
                       setActiveChatId(
@@ -1665,19 +2300,20 @@ export default function App() {
                   >
 
                     <View
-                      style={styles.chatItemAvatar}
+                      style={styles.chatAvatar}
                     >
 
                       <Text
                         style={{
-                          fontSize: 22,
+                          fontSize: 23,
                         }}
                       >
-                        {item.peer
-                          ?.emoji || '😀'}
+                        {item.peer?.emoji ||
+                          '😀'}
                       </Text>
 
                     </View>
+
 
                     <View
                       style={{
@@ -1686,7 +2322,7 @@ export default function App() {
                     >
 
                       <Text
-                        style={styles.chatItemName}
+                        style={styles.chatName}
                       >
                         {item.peer
                           ?.displayName ||
@@ -1696,7 +2332,7 @@ export default function App() {
                       </Text>
 
                       <Text
-                        style={styles.chatItemPreview}
+                        style={styles.chatPreview}
                         numberOfLines={1}
                       >
                         {last?.text ||
@@ -1710,12 +2346,10 @@ export default function App() {
                 );
 
               }}
-              contentContainerStyle={
-                styles.chatsList
-              }
             />
 
           )}
+
 
           {/* NEW CHAT MODAL */}
 
@@ -1736,7 +2370,7 @@ export default function App() {
                   <Text
                     style={styles.modalTitle}
                   >
-                    Start a new chat
+                    New Chat
                   </Text>
 
                   <TouchableOpacity
@@ -1750,55 +2384,51 @@ export default function App() {
                       setSearchResults([]);
 
                     }}
-                    style={
-                      styles.modalCloseButton
-                    }
                   >
 
                     <Text
-                      style={styles.modalCloseText}
+                      style={styles.closeText}
                     >
-                      ✕
+                      ×
                     </Text>
 
                   </TouchableOpacity>
 
                 </View>
 
+
                 <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search for a user..."
-                  placeholderTextColor={SUB}
+                  style={styles.input}
+                  placeholder="@username"
+                  placeholderTextColor="#666"
+                  autoCapitalize="none"
                   value={searchQuery}
-                  onChangeText={query => {
-
-                    setSearchQuery(query);
-                    handleSearch(query);
-
-                  }}
+                  onChangeText={
+                    setSearchQuery
+                  }
                   autoFocus
                 />
 
-                <FlatList
-                  data={searchResults}
-                  keyExtractor={item =>
-                    item.id
-                  }
-                  renderItem={({ item }) => (
+
+                {searchResults.map(
+                  user => (
 
                     <TouchableOpacity
-                      style={
-                        styles.userResultItem
+                      key={
+                        String(
+                          user._id ||
+                          user.id ||
+                          user.username
+                        )
                       }
+                      style={styles.searchResult}
                       onPress={() =>
-                        startChat(item)
+                        openChat(user)
                       }
                     >
 
                       <View
-                        style={
-                          styles.userResultAvatar
-                        }
+                        style={styles.searchAvatar}
                       >
 
                         <Text
@@ -1806,62 +2436,37 @@ export default function App() {
                             fontSize: 20,
                           }}
                         >
-                          {item.emoji ||
+                          {user.emoji ||
                             '😀'}
                         </Text>
 
                       </View>
 
-                      <View>
+                      <View
+                        style={{
+                          flex: 1,
+                        }}
+                      >
 
                         <Text
-                          style={
-                            styles.userResultName
-                          }
+                          style={styles.searchName}
                         >
-                          {item
-                            .displayName ||
-                            item.username}
+                          {user.displayName ||
+                            user.username}
                         </Text>
 
                         <Text
-                          style={
-                            styles.userResultHandle
-                          }
+                          style={styles.searchUsername}
                         >
-                          @{item.username}
+                          @{user.username}
                         </Text>
 
                       </View>
 
                     </TouchableOpacity>
 
-                  )}
-                  scrollEnabled={false}
-                  ListEmptyComponent={
-                    searchQuery ? (
-
-                      <Text
-                        style={
-                          styles.noResults
-                        }
-                      >
-                        No users found
-                      </Text>
-
-                    ) : (
-
-                      <Text
-                        style={
-                          styles.noResults
-                        }
-                      >
-                        Search for users...
-                      </Text>
-
-                    )
-                  }
-                />
+                  )
+                )}
 
               </View>
 
@@ -1869,11 +2474,12 @@ export default function App() {
 
           ) : null}
 
-          {/* BOTTOM NAV */}
 
           <BottomNav
             tab={tab}
-            onChange={setTab}
+            onChange={
+              setTabScreen
+            }
           />
 
         </View>
@@ -1886,7 +2492,7 @@ export default function App() {
 
 
   // ===================================================
-  // CALLS SCREEN
+  // CALLS
   // ===================================================
 
   if (screen === 'calls') {
@@ -1897,7 +2503,9 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
         <View
           style={styles.screen}
@@ -1907,26 +2515,17 @@ export default function App() {
             style={styles.topbar}
           >
 
-            <View>
-
-              <Text
-                style={styles.brandTitle}
-              >
-                Calls
-              </Text>
-
-              <Text
-                style={styles.connectionText}
-              >
-                Active and recent calls
-              </Text>
-
-            </View>
+            <Text
+              style={styles.title}
+            >
+              Calls
+            </Text>
 
           </View>
 
+
           <View
-            style={styles.emptyState}
+            style={styles.emptyScreen}
           >
 
             <Text
@@ -1938,20 +2537,23 @@ export default function App() {
             <Text
               style={styles.emptyTitle}
             >
-              No calls yet
+              Calls
             </Text>
 
             <Text
               style={styles.emptySubtitle}
             >
-              Start a call from a chat
+              Voice and video calls are coming to Hole.
             </Text>
 
           </View>
 
+
           <BottomNav
             tab={tab}
-            onChange={setTab}
+            onChange={
+              setTabScreen
+            }
           />
 
         </View>
@@ -1964,7 +2566,7 @@ export default function App() {
 
 
   // ===================================================
-  // PROFILE/SETTINGS SCREEN
+  // SETTINGS
   // ===================================================
 
   if (screen === 'profile-tab') {
@@ -1975,7 +2577,9 @@ export default function App() {
         style={styles.safe}
       >
 
-        <StatusBar style="light" />
+        <StatusBar
+          style="light"
+        />
 
         <View
           style={styles.screen}
@@ -1985,214 +2589,964 @@ export default function App() {
             style={styles.topbar}
           >
 
-            <View>
-
-              <Text
-                style={styles.brandTitle}
-              >
-                Settings
-              </Text>
-
-              <Text
-                style={styles.connectionText}
-              >
-                Account settings
-              </Text>
-
-            </View>
+            <Text
+              style={styles.title}
+            >
+              Settings
+            </Text>
 
           </View>
 
-          <ScrollView
-            contentContainerStyle={
-              styles.settingsScroll
-            }
-          >
 
-            <View
-              style={styles.settingsCard}
+          {/* =========================================
+              SETTINGS HOME
+          ========================================= */}
+
+          {settingsSection === null && (
+
+            <ScrollView
+              contentContainerStyle={{
+                padding: 16,
+                paddingBottom: 100,
+              }}
             >
 
-              <View
-                style={styles.profileInfo}
+              <TouchableOpacity
+                style={styles.settingsProfile}
+                onPress={() =>
+                  setSettingsSection(
+                    'profile'
+                  )
+                }
               >
 
                 <View
-                  style={styles.profileAvatar}
+                  style={styles.settingsAvatar}
                 >
 
                   <Text
                     style={{
-                      fontSize: 32,
+                      fontSize: 28,
                     }}
                   >
-                    {me?.emoji || '😀'}
+                    {me?.emoji ||
+                      '😊'}
                   </Text>
 
                 </View>
 
-                <View>
+
+                <View
+                  style={{
+                    flex: 1,
+                  }}
+                >
 
                   <Text
-                    style={styles.profileName}
+                    style={
+                      styles.settingsProfileName
+                    }
                   >
                     {me?.displayName ||
-                      me?.username ||
-                      'User'}
+                      'Your profile'}
                   </Text>
 
                   <Text
-                    style={styles.profileHandle}
+                    style={
+                      styles.settingsProfileHandle
+                    }
                   >
-                    @{me?.username}
+                    @{me?.username || ''}
                   </Text>
 
                 </View>
 
-              </View>
 
-            </View>
+                <Text
+                  style={
+                    styles.settingsArrow
+                  }
+                >
+                  ›
+                </Text>
 
-            <Text
-              style={styles.sectionTitle}
-            >
-              Profile
-            </Text>
+              </TouchableOpacity>
 
-            <View
-              style={styles.settingsCard}
-            >
+
+              <Text
+                style={
+                  styles.settingsCategory
+                }
+              >
+                ACCOUNT
+              </Text>
+
 
               <SettingsRow
-                title="Display Name"
-                subtitle={
-                  me?.displayName ||
-                  'Not set'
+                icon="👤"
+                title="Profile"
+                subtitle="Manage your identity"
+                onPress={() =>
+                  setSettingsSection(
+                    'profile'
+                  )
                 }
               />
 
-              <View
-                style={styles.divider}
-              />
-
-              <SettingsRow
-                title="Username"
-                subtitle={me?.username}
-              />
-
-              <View
-                style={styles.divider}
-              />
-
-              <SettingsRow
-                title="Avatar Emoji"
-                subtitle={me?.emoji}
-              />
-
-            </View>
-
-            <Text
-              style={styles.sectionTitle}
-            >
-              Security
-            </Text>
-
-            <View
-              style={styles.settingsCard}
-            >
 
               <SettingsRow
                 icon="🔐"
-                title="Change password"
-                subtitle="Update your password"
+                title="Security"
+                subtitle="Password and account security"
+                onPress={() =>
+                  setSettingsSection(
+                    'security'
+                  )
+                }
               />
 
-              <View
-                style={styles.divider}
-              />
-
-              <SettingsRow
-                icon="🔑"
-                title="Two-factor auth"
-                subtitle="Protect your account"
-              />
-
-            </View>
-
-            <Text
-              style={styles.sectionTitle}
-            >
-              Privacy
-            </Text>
-
-            <View
-              style={styles.settingsCard}
-            >
-
-              <SettingsRow
-                icon="👁️"
-                title="Privacy settings"
-                subtitle="Control who can find you"
-              />
-
-              <View
-                style={styles.divider}
-              />
-
-              <SettingsRow
-                icon="🚫"
-                title="Blocked users"
-                subtitle="Manage blocked users"
-              />
-
-            </View>
-
-            <Text
-              style={styles.sectionTitle}
-            >
-              Danger Zone
-            </Text>
-
-            <TouchableOpacity
-              style={styles.dangerCard}
-              onPress={logout}
-            >
 
               <Text
-                style={styles.dangerCardText}
+                style={
+                  styles.settingsCategory
+                }
               >
-                Log Out
+                PRIVACY
               </Text>
 
-            </TouchableOpacity>
 
-            <View
-              style={{ height: 100 }}
-            />
+              <SettingsRow
+                icon="🛡️"
+                title="Privacy & Data"
+                subtitle="Control and understand your data"
+                onPress={() =>
+                  setSettingsSection(
+                    'privacy'
+                  )
+                }
+              />
 
-          </ScrollView>
+
+              <SettingsRow
+                icon="📜"
+                title="Privacy Policy"
+                subtitle="How Hole handles information"
+                onPress={() =>
+                  setSettingsSection(
+                    'privacyPolicy'
+                  )
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsCategory
+                }
+              >
+                RULES & INFORMATION
+              </Text>
+
+
+              <SettingsRow
+                icon="📋"
+                title="Terms of Service"
+                subtitle="Rules for using Hole"
+                onPress={() =>
+                  setSettingsSection(
+                    'terms'
+                  )
+                }
+              />
+
+
+              <SettingsRow
+                icon="👥"
+                title="Community Guidelines"
+                subtitle="Keep Hole safe for everyone"
+                onPress={() =>
+                  setSettingsSection(
+                    'community'
+                  )
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsCategory
+                }
+              >
+                ABOUT
+              </Text>
+
+
+              <SettingsRow
+                icon="❓"
+                title="Help & How Hole Works"
+                subtitle="Learn how to use Hole"
+                onPress={() =>
+                  setSettingsSection(
+                    'help'
+                  )
+                }
+              />
+
+              <SettingsRow
+                icon="👤"
+                title="About Hole"
+                subtitle="App information"
+                onPress={() =>
+                  setSettingsSection(
+                    'about'
+                  )
+                }
+              />
+
+
+              <TouchableOpacity
+                style={
+                  styles.leaveSettingsRow
+                }
+                onPress={leaveHole}
+              >
+
+                <Text
+                  style={
+                    styles.leaveSettingsText
+                  }
+                >
+                  Leave the Hole
+                </Text>
+
+              </TouchableOpacity>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              PROFILE
+          ========================================= */}
+
+          {settingsSection ===
+            'profile' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <View
+                style={
+                  styles.settingsLargeAvatar
+                }
+              >
+
+                <Text
+                  style={{
+                    fontSize: 42,
+                  }}
+                >
+                  {me?.emoji ||
+                    '😊'}
+                </Text>
+
+              </View>
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Profile
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                This is the identity other people see on Hole.
+              </Text>
+
+
+              <InfoBox
+                label="Display name"
+                value={
+                  me?.displayName ||
+                  'Not available'
+                }
+              />
+
+
+              <InfoBox
+                label="Username"
+                value={
+                  `@${me?.username || ''}`
+                }
+              />
+
+
+              <InfoBox
+                label="Email"
+                value={
+                  me?.email ||
+                  verifiedEmail ||
+                  'Verified email'
+                }
+              />
+
+
+              <InfoBox
+                label="Profile icon"
+                value={
+                  me?.emoji ||
+                  '😊'
+                }
+              />
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              SECURITY
+          ========================================= */}
+
+          {settingsSection ===
+            'security' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Security
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Information about protecting your Hole account.
+              </Text>
+
+
+              <InfoBox
+                label="Email verification"
+                value="Your email address is verified during account registration."
+              />
+
+
+              <InfoBox
+                label="Password"
+                value="Your password should be unique and should not be shared with anyone."
+              />
+
+
+              <InfoBox
+                label="Temporary messages"
+                value="Messages are designed to expire. However, recipients can still copy or capture content."
+              />
+
+
+              <Text
+                style={
+                  styles.settingsBody
+                }
+              >
+                If you believe someone has gained unauthorized access to your account, stop using the account and contact the Hole operator.
+              </Text>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              PRIVACY & DATA
+          ========================================= */}
+
+          {settingsSection ===
+            'privacy' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Privacy & Data
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Hole is designed around simple communication and disappearing messages.
+              </Text>
+
+
+              <SectionTitle>
+                Information we may collect
+              </SectionTitle>
+
+              <BodyText>
+                Hole may collect information needed to create and operate your account, including your email address, username, display name and profile icon.
+              </BodyText>
+
+
+              <SectionTitle>
+                Account information
+              </SectionTitle>
+
+              <BodyText>
+                Your account information is used to identify your account, authenticate you and allow other users to find you when your account is discoverable.
+              </BodyText>
+
+
+              <SectionTitle>
+                Messages
+              </SectionTitle>
+
+              <BodyText>
+                Hole is designed so that messages are temporary. Messages may be automatically deleted after the applicable expiration period.
+              </BodyText>
+
+
+              <SectionTitle>
+                Security information
+              </SectionTitle>
+
+              <BodyText>
+                We may process technical information such as authentication information, connection data and security logs where necessary to operate and protect the service.
+              </BodyText>
+
+
+              <SectionTitle>
+                Your choices
+              </SectionTitle>
+
+              <BodyText>
+                You can stop using Hole at any time. You may also contact the app operator regarding questions about your personal information or account.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              PRIVACY POLICY
+          ========================================= */}
+
+          {settingsSection ===
+            'privacyPolicy' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Privacy Policy
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Last updated: September 2026
+              </Text>
+
+
+              <SectionTitle>
+                1. Introduction
+              </SectionTitle>
+
+              <BodyText>
+                Hole is a messaging application operated by Eric Mwangi Kimani. This Privacy Policy explains what information Hole may collect, how it may be used, and the choices available to users.
+              </BodyText>
+
+
+              <SectionTitle>
+                2. Information we collect
+              </SectionTitle>
+
+              <BodyText>
+                When you create an account, Hole may collect your email address, username, display name, password credentials and selected profile icon.
+              </BodyText>
+
+
+              <SectionTitle>
+                3. How information is used
+              </SectionTitle>
+
+              <BodyText>
+                Information may be used to create and maintain your account, authenticate you, provide messaging functionality, protect the service and prevent abuse.
+              </BodyText>
+
+
+              <SectionTitle>
+                4. Messages
+              </SectionTitle>
+
+              <BodyText>
+                Hole is designed around temporary messaging. Messages are intended to disappear according to the application's expiration rules. Temporary messaging does not mean that users should assume that information can never be copied, photographed or otherwise captured by another person.
+              </BodyText>
+
+
+              <SectionTitle>
+                5. Third-party services
+              </SectionTitle>
+
+              <BodyText>
+                Hole may use third-party infrastructure providers to operate authentication, databases, email delivery, hosting and other technical services. Such providers may process information as necessary to provide those services.
+              </BodyText>
+
+
+              <SectionTitle>
+                6. Data security
+              </SectionTitle>
+
+              <BodyText>
+                Reasonable technical and organizational measures are used to protect account information. However, no internet service can guarantee absolute security.
+              </BodyText>
+
+
+              <SectionTitle>
+                7. Your rights
+              </SectionTitle>
+
+              <BodyText>
+                Depending on applicable law, you may have rights relating to access, correction, deletion or other processing of your personal information.
+              </BodyText>
+
+
+              <SectionTitle>
+                8. Contact
+              </SectionTitle>
+
+              <BodyText>
+                Privacy questions or requests may be directed to the operator of Hole.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              TERMS
+          ========================================= */}
+
+          {settingsSection ===
+            'terms' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Terms of Service
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Last updated: September 2026
+              </Text>
+
+
+              <SectionTitle>
+                1. Acceptance
+              </SectionTitle>
+
+              <BodyText>
+                By creating or using a Hole account, you agree to follow these Terms and applicable laws.
+              </BodyText>
+
+
+              <SectionTitle>
+                2. Your account
+              </SectionTitle>
+
+              <BodyText>
+                You are responsible for maintaining the confidentiality of your account credentials and for activity performed through your account.
+              </BodyText>
+
+
+              <SectionTitle>
+                3. Prohibited conduct
+              </SectionTitle>
+
+              <BodyText>
+                Users must not use Hole to threaten, harass, impersonate, defraud, abuse, exploit or otherwise harm another person.
+              </BodyText>
+
+
+              <SectionTitle>
+                4. Temporary messages
+              </SectionTitle>
+
+              <BodyText>
+                The disappearing-message feature is not a guarantee that content cannot be preserved by another person. Users should avoid sending information that they would not want another person to retain.
+              </BodyText>
+
+
+              <SectionTitle>
+                5. Service availability
+              </SectionTitle>
+
+              <BodyText>
+                Hole may occasionally be unavailable because of maintenance, technical problems, network failures or other circumstances.
+              </BodyText>
+
+
+              <SectionTitle>
+                6. Account termination
+              </SectionTitle>
+
+              <BodyText>
+                Accounts may be restricted or terminated when necessary to protect users, comply with law or enforce these rules.
+              </BodyText>
+
+
+              <SectionTitle>
+                7. Changes
+              </SectionTitle>
+
+              <BodyText>
+                These terms may be updated as Hole develops. Continued use after applicable changes may constitute acceptance of the updated terms.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              COMMUNITY
+          ========================================= */}
+
+          {settingsSection ===
+            'community' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Community Guidelines
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Hole should be a place for communication, not abuse.
+              </Text>
+
+
+              <SectionTitle>
+                Be respectful
+              </SectionTitle>
+
+              <BodyText>
+                Do not harass, threaten, bully or intentionally intimidate other users.
+              </BodyText>
+
+
+              <SectionTitle>
+                Do not impersonate
+              </SectionTitle>
+
+              <BodyText>
+                Do not pretend to be another person, organization or public figure in order to deceive others.
+              </BodyText>
+
+
+              <SectionTitle>
+                Do not abuse the service
+              </SectionTitle>
+
+              <BodyText>
+                Do not attempt to compromise accounts, disrupt the service, bypass security controls or misuse another person's information.
+              </BodyText>
+
+
+              <SectionTitle>
+                Protect yourself
+              </SectionTitle>
+
+              <BodyText>
+                Never share passwords, verification codes or sensitive personal information with people you do not trust.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
+          {/* =========================================
+              HELP
+          ========================================= */}
+
+          {settingsSection ===
+            'help' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Help & How Hole Works
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Everything you need to know about using Hole.
+              </Text>
+
+              <SectionTitle>
+                Getting started
+              </SectionTitle>
+
+              <BodyText>
+                Create a Hole account using your email address, username, display name and password. You will need to verify your email before completing registration.
+              </BodyText>
+
+              <SectionTitle>
+                Finding people
+              </SectionTitle>
+
+              <BodyText>
+                Use the search feature to find another Hole user by their username, then start a conversation.
+              </BodyText>
+
+              <SectionTitle>
+                Sending messages
+              </SectionTitle>
+
+              <BodyText>
+                Open a conversation, type your message and press Send. Hole is designed for temporary communication, so messages are automatically removed after their lifetime.
+              </BodyText>
+
+              <SectionTitle>
+                Your profile
+              </SectionTitle>
+
+              <BodyText>
+                Your profile contains your display name, username and profile icon. You can manage your identity from Settings.
+              </BodyText>
+
+              <SectionTitle>
+                Staying safe
+              </SectionTitle>
+
+              <BodyText>
+                Never share your password or email verification codes with anyone. Do not send sensitive information to people you do not trust.
+              </BodyText>
+
+              <SectionTitle>
+                Need more help?
+              </SectionTitle>
+
+              <BodyText>
+                Visit the official Hole website for more information about the application.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
+
+          {/* =========================================
+              ABOUT
+          ========================================= */}
+
+          {settingsSection ===
+            'about' && (
+
+            <ScrollView
+              contentContainerStyle={
+                styles.settingsPage
+              }
+            >
+
+              <SettingsBack
+                onPress={() =>
+                  setSettingsSection(null)
+                }
+              />
+
+
+              <View
+                style={styles.aboutLogo}
+              >
+
+                <Text
+                  style={
+                    styles.aboutLogoText
+                  }
+                >
+                  H
+                  <Text
+                    style={
+                      styles.ringChar
+                    }
+                  >
+                    ◯
+                  </Text>
+                  LE
+                </Text>
+
+              </View>
+
+
+              <Text
+                style={
+                  styles.settingsPageTitle
+                }
+              >
+                Hole
+              </Text>
+
+              <Text
+                style={
+                  styles.settingsPageDescription
+                }
+              >
+                Simple communication. Temporary messages.
+              </Text>
+
+
+              <InfoBox
+                label="Operator"
+                value="Eric Mwangi Kimani"
+              />
+
+
+              <InfoBox
+                label="Application"
+                value="Hole Messaging"
+              />
+
+
+              <BodyText>
+                Hole is an independent messaging application designed around simple identities and temporary communication.
+              </BodyText>
+
+
+              <BodyText>
+                © 2026 Eric Mwangi Kimani. All rights reserved.
+              </BodyText>
+
+            </ScrollView>
+
+          )}
+
 
           <BottomNav
             tab={tab}
-            onChange={newTab => {
-
-              if (newTab === 'chats') {
-
-                setScreen('home');
-
-              } else if (newTab === 'calls') {
-
-                setScreen('calls');
-
-              } else if (newTab === 'settings') {
-
-                setScreen('profile-tab');
-
-              }
-
-              setTab(newTab);
-
-            }}
+            onChange={
+              setTabScreen
+            }
           />
 
         </View>
@@ -2248,20 +3602,16 @@ function SettingsRow({
       onPress={onPress}
     >
 
-      {icon && (
+      <Text
+        style={styles.settingsIcon}
+      >
+        {icon}
+      </Text>
 
-        <Text
-          style={styles.settingsIcon}
-        >
-          {icon}
-        </Text>
-
-      )}
 
       <View
         style={{
           flex: 1,
-          marginLeft: icon ? 12 : 0,
         }}
       >
 
@@ -2279,6 +3629,7 @@ function SettingsRow({
 
       </View>
 
+
       <Text
         style={styles.settingsArrow}
       >
@@ -2293,7 +3644,110 @@ function SettingsRow({
 
 
 // =====================================================
-// BOTTOM NAV
+// SETTINGS BACK
+// =====================================================
+
+function SettingsBack({
+  onPress,
+}) {
+
+  return (
+
+    <TouchableOpacity
+      onPress={onPress}
+    >
+
+      <Text
+        style={styles.settingsBack}
+      >
+        ← Settings
+      </Text>
+
+    </TouchableOpacity>
+
+  );
+
+}
+
+
+// =====================================================
+// INFO BOX
+// =====================================================
+
+function InfoBox({
+  label,
+  value,
+}) {
+
+  return (
+
+    <View
+      style={styles.infoBox}
+    >
+
+      <Text
+        style={styles.infoLabel}
+      >
+        {label}
+      </Text>
+
+      <Text
+        style={styles.infoValue}
+      >
+        {value}
+      </Text>
+
+    </View>
+
+  );
+
+}
+
+
+// =====================================================
+// SECTION TITLE
+// =====================================================
+
+function SectionTitle({
+  children,
+}) {
+
+  return (
+
+    <Text
+      style={styles.settingsSectionTitle}
+    >
+      {children}
+    </Text>
+
+  );
+
+}
+
+
+// =====================================================
+// BODY TEXT
+// =====================================================
+
+function BodyText({
+  children,
+}) {
+
+  return (
+
+    <Text
+      style={styles.settingsBody}
+    >
+      {children}
+    </Text>
+
+  );
+
+}
+
+
+// =====================================================
+// BOTTOM NAVIGATION
 // =====================================================
 
 function BottomNav({
@@ -2306,19 +3760,19 @@ function BottomNav({
     {
       key: 'chats',
       label: 'Chats',
-      ico: 'CHAT',
+      ico: '💬',
     },
 
     {
       key: 'calls',
       label: 'Calls',
-      ico: 'CALL',
+      ico: '📞',
     },
 
     {
-      key: 'settings',
+      key: 'profile',
       label: 'Settings',
-      ico: 'SET',
+      ico: '⚙️',
     },
 
   ];
@@ -2384,53 +3838,9 @@ const styles =
       backgroundColor: BG,
     },
 
-
     screen: {
       flex: 1,
       backgroundColor: BG,
-    },
-
-
-    // ===============================================
-    // TOPBAR
-    // ===============================================
-
-    topbar: {
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: HAIR,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-
-    brandTitle: {
-      color: WHITE,
-      fontSize: 20,
-      fontWeight: '700',
-      marginBottom: 4,
-    },
-
-    connectionText: {
-      color: SUB,
-      fontSize: 12,
-      fontWeight: '400',
-    },
-
-    newChatButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 12,
-      backgroundColor: SURFACE2,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-
-    newChatButtonText: {
-      color: WHITE,
-      fontSize: 24,
-      fontWeight: '600',
     },
 
 
@@ -2440,16 +3850,17 @@ const styles =
 
     authContainer: {
       flexGrow: 1,
-      padding: 20,
-      paddingTop: 40,
-      paddingBottom: 40,
+      padding: 24,
+      paddingTop: 80,
+      paddingBottom: 50,
       justifyContent: 'center',
     },
 
-    authLogoBox: {
-      width: 60,
-      height: 60,
-      borderRadius: 30,
+
+    logoCircle: {
+      width: 80,
+      height: 80,
+      borderRadius: 40,
       borderWidth: 2,
       borderColor: HAIR,
       backgroundColor: SURFACE,
@@ -2460,21 +3871,23 @@ const styles =
       marginBottom: 24,
     },
 
-    authLogoText: {
+
+    logoText: {
       color: WHITE,
-      fontSize: 18,
-      fontWeight: '700',
-      letterSpacing: -1,
+      fontSize: 19,
+      fontWeight: '600',
     },
 
-    authLogoRing: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-      borderWidth: 1.5,
+
+    logoRing: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 2,
       borderColor: WHITE,
-      marginHorizontal: 3,
+      marginHorizontal: 2,
     },
+
 
     authTitle: {
       color: WHITE,
@@ -2493,9 +3906,14 @@ const styles =
     },
 
 
-    // ===============================================
-    // INPUTS
-    // ===============================================
+    emailDisplay: {
+      color: WHITE,
+      fontSize: 14,
+      textAlign: 'center',
+      marginTop: -15,
+      marginBottom: 24,
+    },
+
 
     input: {
       backgroundColor: SURFACE,
@@ -2509,17 +3927,13 @@ const styles =
       marginBottom: 12,
     },
 
+
     codeInput: {
       textAlign: 'center',
-      letterSpacing: 4,
-      fontSize: 16,
-      fontWeight: '600',
+      letterSpacing: 5,
+      fontSize: 18,
     },
 
-
-    // ===============================================
-    // BUTTONS
-    // ===============================================
 
     primaryButton: {
       backgroundColor: WHITE,
@@ -2527,19 +3941,28 @@ const styles =
       paddingVertical: 14,
       alignItems: 'center',
       justifyContent: 'center',
-      marginTop: 4,
+      marginTop: 8,
       marginBottom: 12,
     },
 
+
+    primaryButtonSmall: {
+      backgroundColor: WHITE,
+      borderRadius: 14,
+      paddingVertical: 13,
+      paddingHorizontal: 25,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 18,
+    },
+
+
     primaryButtonText: {
       color: BLACK_FIX,
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '600',
     },
 
-    buttonDisabled: {
-      opacity: 0.5,
-    },
 
     secondaryButton: {
       borderWidth: 1,
@@ -2551,106 +3974,146 @@ const styles =
       marginBottom: 12,
     },
 
+
     secondaryButtonText: {
       color: WHITE,
-      fontSize: 14,
-      fontWeight: '500',
+      fontSize: 13,
     },
 
 
-    // ===============================================
-    // PROFILE SETUP
-    // ===============================================
-
-    profileEmojiBox: {
-      width: 80,
-      height: 80,
-      borderRadius: 20,
-      backgroundColor: SURFACE,
-      alignSelf: 'center',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 20,
+    backText: {
+      color: SUB,
+      textAlign: 'center',
+      fontSize: 13,
+      marginTop: 12,
     },
 
-    profileEmoji: {
-      fontSize: 40,
-    },
-
-    emojiLabel: {
-      color: WHITE,
-      fontSize: 12,
-      fontWeight: '600',
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
-      marginVertical: 16,
-      marginLeft: 4,
-    },
-
-    emojiGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginBottom: 16,
-      justifyContent: 'center',
-    },
-
-    emojiItem: {
-      width: '22%',
-      aspectRatio: 1,
-      borderRadius: 10,
-      backgroundColor: SURFACE,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: 'transparent',
-    },
-
-    emojiItemActive: {
-      borderColor: ACCENT,
-      backgroundColor: SURFACE2,
-    },
-
-    emojiText: {
-      fontSize: 28,
-    },
-
-
-    // ===============================================
-    // ERROR
-    // ===============================================
 
     errorBox: {
       backgroundColor: 'rgba(255,69,58,0.08)',
       borderWidth: 1,
       borderColor: 'rgba(255,69,58,0.25)',
-      borderRadius: 10,
+      borderRadius: 12,
       padding: 12,
-      marginBottom: 16,
+      marginBottom: 15,
     },
+
 
     errorText: {
       color: RED,
-      fontSize: 13,
-      fontWeight: '500',
+      fontSize: 12,
+      lineHeight: 18,
+      textAlign: 'center',
+    },
+
+
+    verifiedText: {
+      color: '#4CD964',
+      fontSize: 12,
+      textAlign: 'center',
+      marginTop: 15,
+    },
+
+
+    emojiLabel: {
+      color: SUB,
+      fontSize: 12,
+      marginTop: 5,
+      marginBottom: 10,
+    },
+
+
+    emojiGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: 20,
+    },
+
+
+    emojiButton: {
+      width: 50,
+      height: 50,
+      borderRadius: 14,
+      backgroundColor: SURFACE,
+      borderWidth: 1,
+      borderColor: HAIR,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 8,
+      marginBottom: 8,
+    },
+
+
+    emojiButtonSelected: {
+      borderColor: WHITE,
+      backgroundColor: SURFACE2,
     },
 
 
     // ===============================================
-    // EMPTY STATE
+    // TOP BAR
     // ===============================================
 
-    emptyState: {
+    topbar: {
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: HAIR,
+    },
+
+
+    title: {
+      color: WHITE,
+      fontSize: 20,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+
+
+    connectionText: {
+      color: SUB,
+      fontSize: 10,
+      marginTop: 3,
+    },
+
+
+    newChatButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: SURFACE2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+
+    newChatText: {
+      color: WHITE,
+      fontSize: 25,
+      fontWeight: '300',
+      marginTop: -2,
+    },
+
+
+    // ===============================================
+    // EMPTY
+    // ===============================================
+
+    emptyScreen: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      padding: 20,
+      paddingHorizontal: 35,
     },
 
+
     emptyLogo: {
+      color: SUB,
       fontSize: 48,
       fontWeight: '700',
-      color: SUB,
       marginBottom: 16,
       letterSpacing: -2,
     },
@@ -2666,45 +4129,30 @@ const styles =
     emptySubtitle: {
       color: SUB,
       fontSize: 14,
+      lineHeight: 20,
       textAlign: 'center',
       marginBottom: 20,
     },
 
-    emptyButton: {
-      backgroundColor: WHITE,
-      borderRadius: 10,
-      paddingVertical: 12,
-      paddingHorizontal: 20,
-    },
-
-    emptyButtonText: {
-      color: BLACK_FIX,
-      fontSize: 14,
-      fontWeight: '600',
-    },
-
 
     // ===============================================
-    // CHATS LIST
+    // CHAT LIST
     // ===============================================
 
-    chatsList: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-    },
-
-    chatItem: {
+    chatRow: {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
       paddingVertical: 10,
+      marginHorizontal: 12,
       marginVertical: 4,
       borderRadius: 12,
       backgroundColor: SURFACE,
       gap: 12,
     },
 
-    chatItemAvatar: {
+
+    chatAvatar: {
       width: 44,
       height: 44,
       borderRadius: 12,
@@ -2714,189 +4162,178 @@ const styles =
       flexShrink: 0,
     },
 
-    chatItemName: {
+
+    chatName: {
       color: WHITE,
-      fontSize: 15,
-      fontWeight: '600',
-      marginBottom: 2,
+      fontSize: 14,
+      fontWeight: '500',
     },
 
-    chatItemPreview: {
+
+    chatPreview: {
       color: SUB,
-      fontSize: 13,
+      fontSize: 11,
+      marginTop: 4,
     },
 
 
     // ===============================================
-    // CHAT SCREEN
+    // CHAT
     // ===============================================
-
-    chatContainer: {
-      flex: 1,
-      backgroundColor: BG,
-    },
 
     chatHeader: {
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+      height: 65,
       borderBottomWidth: 1,
       borderBottomColor: HAIR,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
+      paddingHorizontal: 14,
     },
 
-    chatBackButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 8,
-      backgroundColor: SURFACE,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
 
-    chatBackText: {
+    backButton: {
       color: WHITE,
-      fontSize: 24,
-      fontWeight: '600',
+      fontSize: 27,
+      marginRight: 15,
     },
+
 
     chatTitle: {
       color: WHITE,
-      fontSize: 16,
-      fontWeight: '600',
+      fontSize: 15,
+      fontWeight: '500',
     },
 
-    chatStatus: {
+
+    chatSubtitle: {
       color: SUB,
-      fontSize: 12,
-    },
-
-    chatAvatar: {
-      width: 40,
-      height: 40,
-      borderRadius: 8,
-      backgroundColor: SURFACE2,
-      alignItems: 'center',
-      justifyContent: 'center',
+      fontSize: 10,
+      marginTop: 3,
     },
 
 
-    // ===============================================
-    // MESSAGES
-    // ===============================================
-
-    messagesArea: {
-      flex: 1,
-      backgroundColor: BG,
+    connectionDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+      backgroundColor: '#555',
     },
 
-    messagesList: {
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+
+    connectionDotOn: {
+      backgroundColor: '#4CD964',
     },
 
-    messageRow: {
-      marginVertical: 6,
-      flexDirection: 'row',
-      justifyContent: 'flex-start',
+
+    typingText: {
+      color: SUB,
+      fontSize: 10,
+      paddingHorizontal: 17,
+      paddingTop: 6,
     },
 
-    messageRowOwn: {
-      justifyContent: 'flex-end',
+
+    messageList: {
+      padding: 15,
+      paddingBottom: 20,
     },
+
 
     messageBubble: {
-      maxWidth: '75%',
-      backgroundColor: SURFACE,
-      borderRadius: 12,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+      maxWidth: '78%',
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      borderRadius: 17,
+      marginBottom: 7,
     },
 
-    messageBubbleOwn: {
+
+    myMessage: {
+      alignSelf: 'flex-end',
       backgroundColor: WHITE,
+      borderBottomRightRadius: 5,
     },
+
+
+    theirMessage: {
+      alignSelf: 'flex-start',
+      backgroundColor: SURFACE2,
+      borderBottomLeftRadius: 5,
+    },
+
 
     messageText: {
       color: WHITE,
-      fontSize: 14,
+      fontSize: 13,
       lineHeight: 18,
     },
 
-    messageTextOwn: {
+
+    myMessageText: {
       color: BLACK_FIX,
     },
 
-    expireBar: {
-      height: 2,
-      backgroundColor: 'rgba(255,255,255,0.3)',
-      borderRadius: 1,
-      marginTop: 6,
-    },
 
-    expireBarOwn: {
-      backgroundColor: 'rgba(0,0,0,0.2)',
+    messageTimer: {
+      color: SUB,
+      fontSize: 8,
+      marginTop: 4,
+      textAlign: 'right',
     },
 
 
-    // ===============================================
-    // INPUT BOX
-    // ===============================================
-
-    inputBox: {
-      paddingHorizontal: 12,
-      paddingVertical: 12,
-      borderTopWidth: 1,
-      borderTopColor: HAIR,
+    messageInputRow: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      gap: 8,
+      padding: 10,
+      borderTopWidth: 1,
+      borderTopColor: HAIR,
+      backgroundColor: BG,
     },
+
 
     messageInput: {
       flex: 1,
+      minHeight: 42,
+      maxHeight: 110,
       backgroundColor: SURFACE,
-      borderRadius: 10,
       borderWidth: 1,
       borderColor: HAIR,
+      borderRadius: 20,
       color: WHITE,
-      fontSize: 14,
-      paddingHorizontal: 12,
+      paddingHorizontal: 15,
       paddingVertical: 10,
-      maxHeight: 100,
+      fontSize: 13,
+      marginRight: 8,
     },
+
 
     sendButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: WHITE,
-      borderRadius: 10,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
       alignItems: 'center',
       justifyContent: 'center',
-      minWidth: 60,
     },
 
-    sendButtonDisabled: {
-      opacity: 0.4,
-    },
 
     sendButtonText: {
-      color: BLACK_FIX,
-      fontSize: 14,
+      color: '#000000',
+      fontSize: 22,
       fontWeight: '600',
     },
 
 
     // ===============================================
-    // MODAL
+    // NEW CHAT
     // ===============================================
 
     modalOverlay: {
       position: 'absolute',
-      top: 0,
       left: 0,
       right: 0,
+      top: 0,
       bottom: 0,
       backgroundColor: 'rgba(0,0,0,0.8)',
       justifyContent: 'flex-end',
@@ -2913,12 +4350,14 @@ const styles =
       maxHeight: '85%',
     },
 
+
     modalHeader: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
+      justifyContent: 'space-between',
+      marginBottom: 15,
     },
+
 
     modalTitle: {
       color: WHITE,
@@ -2926,39 +4365,15 @@ const styles =
       fontWeight: '600',
     },
 
-    modalCloseButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 8,
-      backgroundColor: SURFACE2,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
 
-    modalCloseText: {
+    closeText: {
       color: SUB,
-      fontSize: 18,
-      fontWeight: '600',
-    },
-
-    searchInput: {
-      backgroundColor: SURFACE2,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: HAIR,
-      color: WHITE,
-      fontSize: 14,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      marginBottom: 12,
+      fontSize: 30,
+      fontWeight: '200',
     },
 
 
-    // ===============================================
-    // SEARCH RESULTS
-    // ===============================================
-
-    userResultItem: {
+    searchResult: {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
@@ -2969,7 +4384,8 @@ const styles =
       gap: 12,
     },
 
-    userResultAvatar: {
+
+    searchAvatar: {
       width: 40,
       height: 40,
       borderRadius: 10,
@@ -2979,23 +4395,18 @@ const styles =
       flexShrink: 0,
     },
 
-    userResultName: {
+
+    searchName: {
       color: WHITE,
-      fontSize: 14,
-      fontWeight: '600',
+      fontSize: 13,
+      fontWeight: '500',
     },
 
-    userResultHandle: {
-      color: SUB,
-      fontSize: 12,
-      marginTop: 2,
-    },
 
-    noResults: {
+    searchUsername: {
       color: SUB,
-      fontSize: 14,
-      textAlign: 'center',
-      marginVertical: 20,
+      fontSize: 11,
+      marginTop: 3,
     },
 
 
@@ -3003,107 +4414,222 @@ const styles =
     // SETTINGS
     // ===============================================
 
-    settingsScroll: {
-      paddingHorizontal: 12,
-      paddingVertical: 16,
-    },
-
-    settingsCard: {
-      backgroundColor: SURFACE,
-      borderRadius: 12,
-      marginBottom: 12,
-      overflow: 'hidden',
-    },
-
-    profileInfo: {
+    settingsProfile: {
       flexDirection: 'row',
       alignItems: 'center',
-      padding: 16,
-      gap: 16,
+      backgroundColor: SURFACE,
+      borderWidth: 1,
+      borderColor: HAIR,
+      borderRadius: 18,
+      padding: 14,
+      marginBottom: 20,
     },
 
-    profileAvatar: {
-      width: 56,
-      height: 56,
-      borderRadius: 14,
-      backgroundColor: SURFACE2,
+
+    settingsAvatar: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: BG,
+      borderWidth: 1,
+      borderColor: HAIR,
       alignItems: 'center',
       justifyContent: 'center',
+      marginRight: 12,
     },
 
-    profileName: {
+
+    settingsProfileName: {
       color: WHITE,
-      fontSize: 16,
-      fontWeight: '600',
-      marginBottom: 4,
+      fontSize: 15,
+      fontWeight: '500',
     },
 
-    profileHandle: {
-      color: SUB,
-      fontSize: 13,
-    },
 
-    sectionTitle: {
+    settingsProfileHandle: {
       color: SUB,
       fontSize: 12,
-      fontWeight: '700',
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
-      marginVertical: 12,
+      marginTop: 3,
+    },
+
+
+    settingsCategory: {
+      color: SUB,
+      fontSize: 10,
+      fontWeight: '600',
+      letterSpacing: 0.8,
+      marginTop: 18,
+      marginBottom: 7,
       marginLeft: 4,
     },
+
 
     settingsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 16,
+      backgroundColor: SURFACE,
+      borderBottomWidth: 1,
+      borderBottomColor: HAIR,
       paddingVertical: 14,
-      gap: 12,
+      paddingHorizontal: 12,
     },
 
+
     settingsIcon: {
-      fontSize: 20,
+      width: 34,
+      fontSize: 19,
+      textAlign: 'center',
+      marginRight: 10,
     },
+
 
     settingsRowTitle: {
       color: WHITE,
-      fontSize: 14,
-      fontWeight: '600',
-      marginBottom: 2,
+      fontSize: 13.5,
+      fontWeight: '500',
     },
+
 
     settingsRowSub: {
       color: SUB,
-      fontSize: 12,
+      fontSize: 11,
+      marginTop: 3,
     },
+
 
     settingsArrow: {
       color: SUB,
-      fontSize: 18,
+      fontSize: 24,
+      fontWeight: '300',
+      marginLeft: 8,
+    },
+
+
+    settingsPage: {
+      padding: 20,
+      paddingBottom: 100,
+    },
+
+
+    settingsBack: {
+      color: ACCENT,
+      fontSize: 13,
+      marginBottom: 24,
+    },
+
+
+    settingsPageTitle: {
+      color: WHITE,
+      fontSize: 22,
       fontWeight: '600',
+      marginBottom: 8,
     },
 
-    divider: {
-      height: 1,
-      backgroundColor: HAIR,
-      marginHorizontal: 16,
+
+    settingsPageDescription: {
+      color: SUB,
+      fontSize: 12.5,
+      lineHeight: 19,
+      marginBottom: 20,
     },
 
-    dangerCard: {
-      backgroundColor: 'rgba(255,69,58,0.1)',
-      borderWidth: 1,
-      borderColor: RED,
-      borderRadius: 12,
-      paddingVertical: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 12,
-    },
 
-    dangerCardText: {
-      color: RED,
+    settingsSectionTitle: {
+      color: WHITE,
       fontSize: 14,
       fontWeight: '600',
+      marginTop: 18,
+      marginBottom: 7,
+    },
+
+
+    settingsBody: {
+      color: '#B0B0B5',
+      fontSize: 12.5,
+      lineHeight: 20,
+      marginBottom: 6,
+    },
+
+
+    infoBox: {
+      backgroundColor: SURFACE,
+      borderWidth: 1,
+      borderColor: HAIR,
+      borderRadius: 14,
+      padding: 14,
+      marginBottom: 10,
+    },
+
+
+    infoLabel: {
+      color: SUB,
+      fontSize: 10.5,
+      marginBottom: 5,
+    },
+
+
+    infoValue: {
+      color: WHITE,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+
+
+    settingsLargeAvatar: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      backgroundColor: SURFACE,
+      borderWidth: 1,
+      borderColor: HAIR,
+      alignItems: 'center',
+      justifyContent: 'center',
+      alignSelf: 'center',
+      marginBottom: 14,
+    },
+
+
+    leaveSettingsRow: {
+      marginTop: 30,
+      borderWidth: 1,
+      borderColor: 'rgba(255,69,58,0.35)',
+      borderRadius: 14,
+      padding: 14,
+      alignItems: 'center',
+    },
+
+
+    leaveSettingsText: {
+      color: RED,
+      fontSize: 13,
+      fontWeight: '500',
+    },
+
+
+    aboutLogo: {
+      width: 82,
+      height: 82,
+      borderRadius: 41,
+      backgroundColor: SURFACE,
+      borderWidth: 1,
+      borderColor: HAIR,
+      alignItems: 'center',
+      justifyContent: 'center',
+      alignSelf: 'center',
+      marginBottom: 16,
+    },
+
+
+    aboutLogoText: {
+      color: WHITE,
+      fontSize: 18,
+      fontWeight: '500',
+    },
+
+
+    ringChar: {
+      color: WHITE,
+      fontSize: 18,
     },
 
 
@@ -3112,12 +4638,17 @@ const styles =
     // ===============================================
 
     bottomNav: {
-      flexDirection: 'row',
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: SURFACE,
       borderTopWidth: 1,
       borderTopColor: HAIR,
-      backgroundColor: SURFACE,
+      flexDirection: 'row',
       paddingBottom: 4,
     },
+
 
     navItem: {
       flex: 1,
@@ -3127,10 +4658,10 @@ const styles =
     },
 
     navIcon: {
-      color: SUB,
       fontSize: 10,
       fontWeight: '700',
       letterSpacing: 0.5,
+      color: SUB,
       marginBottom: 4,
     },
 
